@@ -5,9 +5,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using MimeKit;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -40,10 +42,11 @@ public class Function : IHttpFunction
         var authToken = Environment.GetEnvironmentVariable("TWILIO_AUTH_TOKEN");
         var gmailAddress = Environment.GetEnvironmentVariable("GMAIL_ADDRESS");
         var gmailAppPassword = Environment.GetEnvironmentVariable("GMAIL_APP_PASSWORD");
-        var recipientEmail = Environment.GetEnvironmentVariable("RECIPIENT_EMAIL");
+        var defaultRecipientEmail = Environment.GetEnvironmentVariable("RECIPIENT_EMAIL");
+        var recipientMapJson = Environment.GetEnvironmentVariable("RECIPIENT_MAP");
 
         if (string.IsNullOrEmpty(authToken) || string.IsNullOrEmpty(gmailAddress) ||
-            string.IsNullOrEmpty(gmailAppPassword) || string.IsNullOrEmpty(recipientEmail))
+            string.IsNullOrEmpty(gmailAppPassword) || string.IsNullOrEmpty(defaultRecipientEmail))
         {
             _logger.LogError("Missing required configuration (TWILIO_AUTH_TOKEN / GMAIL_ADDRESS / GMAIL_APP_PASSWORD / RECIPIENT_EMAIL).");
             response.StatusCode = StatusCodes.Status500InternalServerError;
@@ -68,7 +71,9 @@ public class Function : IHttpFunction
         {
             var body = form["Body"].ToString();
             var from = form["From"].ToString();
+            var to = form["To"].ToString();
             var code = ExtractCode(body);
+            var recipientEmail = ResolveRecipient(to, recipientMapJson, defaultRecipientEmail, _logger);
 
             await SendEmailAsync(gmailAddress, gmailAppPassword, recipientEmail, code, from, body, context.RequestAborted);
         }
@@ -108,6 +113,29 @@ public class Function : IHttpFunction
     {
         var match = Regex.Match(body ?? string.Empty, @"\d{4,8}");
         return match.Success ? match.Value : null;
+    }
+
+    private static string ResolveRecipient(string to, string? recipientMapJson, string defaultRecipient, ILogger logger)
+    {
+        if (string.IsNullOrEmpty(recipientMapJson))
+        {
+            return defaultRecipient;
+        }
+
+        try
+        {
+            var map = JsonSerializer.Deserialize<Dictionary<string, string>>(recipientMapJson);
+            if (map is not null && map.TryGetValue(to, out var recipient))
+            {
+                return recipient;
+            }
+        }
+        catch (JsonException ex)
+        {
+            logger.LogError(ex, "Failed to parse RECIPIENT_MAP; falling back to default recipient.");
+        }
+
+        return defaultRecipient;
     }
 
     private static async Task SendEmailAsync(
