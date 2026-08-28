@@ -117,14 +117,26 @@ public class Function : IHttpFunction
         var message = new MimeMessage();
         message.From.Add(MailboxAddress.Parse(gmailAddress));
         message.To.Add(MailboxAddress.Parse(recipientEmail));
-        message.Subject = code is not null ? $"SMS code: {code}" : "New SMS received";
-        message.Body = new TextPart("plain")
+
+        if (code is not null)
         {
-            Text = $"Code: {code ?? "(none detected)"}\n" +
-                   $"From: {from}\n" +
-                   $"Received: {DateTime.UtcNow:u}\n\n" +
-                   $"Full message:\n{body}"
-        };
+            message.Subject = $"SMS code: {code}";
+            message.Body = new TextPart("plain")
+            {
+                Text = $"Code: {code}\n" +
+                       $"From: {from}\n" +
+                       $"Received: {DateTime.UtcNow:u}\n\n" +
+                       $"Full message:\n{body}"
+            };
+        }
+        else
+        {
+            message.Subject = "New SMS received";
+            message.Body = new TextPart("plain")
+            {
+                Text = body
+            };
+        }
 
         using var client = new SmtpClient();
         await client.ConnectAsync("smtp.gmail.com", 587, SecureSocketOptions.StartTls, cancellationToken);
